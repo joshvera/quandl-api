@@ -50,7 +50,7 @@ import qualified Data.Text as T
 import qualified Data.HashMap.Strict as H
 
 import Data.Char (toLower, toUpper)
-import Data.Time (UTCTime, Day, readTime)
+import Data.Time (UTCTime, Day, parseTimeOrError)
 import Data.Monoid ((<>))
 import Data.Generics (Data, Typeable)
 import Data.List (intercalate)
@@ -67,7 +67,7 @@ import Blaze.ByteString.Builder (toByteString, fromByteString)
 -- | API parameters supported by Quandl, for use with the 'getTableWith' function.
 --   See <http://www.quandl.com/help/api> for detailed information.
 data Options = Options {
-        opAuthToken         :: Maybe String,            -- ^ The Quandl Auth Token ('Nothing' means no token supplied, limited to 50 requests per day)
+        opApiToken         :: Maybe String,            -- ^ The Quandl API Token ('Nothing' means no token supplied, limited to 50 requests per day)
         opSortAscending     :: Bool,                    -- ^ Sort results ascending or descending
         opNumRows           :: Maybe Int,               -- ^ Limits the number of returned rows ('Nothing' means no limit)
         opStartDate         :: Maybe Day,               -- ^ Start date of returned results (inclusive, 'Nothing' means no restriction on start date)
@@ -81,22 +81,22 @@ data Options = Options {
 --   See <http://www.quandl.com/help/api> for detailed information.
 data Frequency
     = Daily
-    | Weekly 
-    | Monthly 
-    | Quarterly 
-    | Annual 
+    | Weekly
+    | Monthly
+    | Quarterly
+    | Annual
     deriving (Eq, Ord, Show, Data, Typeable)
 
 -- | Desired transformation of returned results.
 --   See <http://www.quandl.com/help/api> for detailed information.
 data Transformation
-    = Diff 
-    | RDiff 
-    | Cumul 
-    | Normalize 
+    = Diff
+    | RDiff
+    | Cumul
+    | Normalize
     deriving (Eq, Ord, Show, Data, Typeable)
 
--- | Metadata of a table. 
+-- | Metadata of a table.
 --   Only returned by Quandl when downloading from a single table.
 data Metadata = Metadata {
         meId            :: Int,         -- ^ Table ID
@@ -167,13 +167,13 @@ asRows (Just x) = map (map convert) x
         convert (String s)  = s
         convert (Number n)  = T.pack $ show n
         convert (Bool b)    = T.pack $ show b
-        convert (Null)      = T.empty
+        convert Null      = T.empty
 
 asUTCTime :: String -> UTCTime
-asUTCTime = readTime defaultTimeLocale "%FT%T%QZ"
+asUTCTime = parseTimeOrError True defaultTimeLocale "%FT%T%QZ"
 
 asDay :: String -> Day
-asDay = readTime defaultTimeLocale "%F"
+asDay = parseTimeOrError True defaultTimeLocale "%F"
 
 parseMetadata :: Value -> Parser (Maybe Metadata)
 parseMetadata o@(Object obj) = case H.lookup "id" obj of
@@ -249,7 +249,7 @@ instance FromJSON SearchPage where
 --   and will return all rows in descending order.
 defaultOptions :: Options
 defaultOptions = Options {
-    opAuthToken         = Nothing,
+    opApiToken         = Nothing,
     opSortAscending     = False,
     opNumRows           = Nothing,
     opStartDate         = Nothing,
@@ -271,7 +271,7 @@ getTable :: String              -- ^ Quandl code for the source
          -> String              -- ^ Quandl code for the table
          -> Maybe String        -- ^ Auth code
          -> IO (Maybe Dataset)  -- ^ Dataset returned by Quandl, or 'Nothing' if parsing failed
-getTable source table auth = decode' <$> downloadJSON (defaultOptions { opAuthToken = auth }) [(source, table, Nothing)]
+getTable source table auth = decode' <$> downloadJSON (defaultOptions { opApiToken = auth }) [(source, table, Nothing)]
 
 -- | Download data from Quandl using the full API.
 --   This function supports all data manipulation options, plus downloading from multiple datasets (multisets).
@@ -280,15 +280,15 @@ getTable source table auth = decode' <$> downloadJSON (defaultOptions { opAuthTo
 --
 --   > import Data.Quandl
 --   > import Data.Time (fromGregorian)
---   > getTableWith (defaultOptions {opSortAscending  = True, 
---   >                               opStartDate      = Just (fromGregorian 2000 1 1), 
---   >                               opEndDate        = Just (fromGregorian 2010 1 1), 
---   >                               opFrequency      = Just Annual, 
+--   > getTableWith (defaultOptions {opSortAscending  = True,
+--   >                               opStartDate      = Just (fromGregorian 2000 1 1),
+--   >                               opEndDate        = Just (fromGregorian 2010 1 1),
+--   >                               opFrequency      = Just Annual,
 --   >                               opTransformation = Just RDiff})
 --   >              [("WIKI", "AAPL", Just 4)]  -- Just 4 means we only want the 4'th column (Close price)
 --
 --   You can pull data from multiple datasets (or from multiple columns in a single dataset) using this function as well.
---   In the example below, we combine US GDP from FRED\/GDP, crude oil spot prices from DOE\/RWTC, and Apple closing prices from WIKI\/AAPL. 
+--   In the example below, we combine US GDP from FRED\/GDP, crude oil spot prices from DOE\/RWTC, and Apple closing prices from WIKI\/AAPL.
 --   We are going to convert all of them to annual percentage changes, and look only at data for the last 10 years.
 --
 --   > import Data.Quandl
@@ -312,14 +312,14 @@ downloadJSON options items = simpleHttp $ createUrl options items
 createUrl :: Options -> [(String, String, Maybe Int)] -> String
 createUrl options items =
     let pathSegs = case items of
-                        [(source, table, _)] -> ["api", "v1", "datasets", T.pack (map toUpper source), T.pack (map toUpper table ++ ".json")]
-                        _                    -> ["api", "v1", "multisets.json"]
+                        [(source, table, _)] -> ["api", "v3", "datasets", T.pack (map toUpper source), T.pack (map toUpper table ++ ".json")]
+                        _                    -> ["api", "v3", "multisets.json"]
         column = case items of
                         [(_, _, c)] -> maybeParam ("column",  fmap show . const c)
                         _           -> param      ("columns", createColumns items)
         query = column ++
                 concatMap maybeParam [
-                    ("auth_token",     opAuthToken),
+                    ("api_token",     opApiToken),
                     ("rows",           fmap show . opNumRows),
                     ("trim_start",     fmap show . opStartDate),
                     ("trim_end",       fmap show . opEndDate),
